@@ -1,101 +1,72 @@
-**CLIP-SARNN for Multimodal Cable Manipulation with Vision + Tactile (GelSight)**
+## CLIP-SARNN Multimodal Manipulation Package (Vision + GelSight + Language)
 
-This repository contains a complete multimodal robotic manipulation pipeline that integrates RGB vision, depth sensing, tactile GelSight images, and natural-language task instructions via CLIP, combined with a Sequential Attentive Recurrent Neural Network (SARNN).
+This repository provides a multimodal sequence-prediction and manipulation learning pipeline built upon RGB vision, depth sensing, GelSight tactile images, and natural-language task instructions.
+It is designed as a research-oriented extension to predictive sensorimotor learning frameworks such as EIPL (Embodied Intelligence with Deep Predictive Learning).
 
-The project extends the predictive-learning framework of EIPL (Embodied Intelligence with Deep Predictive Learning), developed by Ogata Laboratory, Waseda University.
+This package does not replace any ROS driver or hardware API. Instead, it provides the data processing, model architecture, training pipeline, and CLIP-based task-conditioning suitable for academic research in multimodal robotic manipulation.
 
-**Background: EIPL**
+## Features
 
-This project builds on and integrates components from EIPL, an open-source robot learning framework:
+ Multimodal input support (RGB / Depth / GelSight tactile images / Joint States)
 
-EIPL GitHub: https://github.com/ogata-lab/eipl
+ CLIP-guided spatial keypoint extraction
 
-EIPL Documentation: https://ogata-lab.github.io/eipl-docs/en/
+ Natural-language task conditioning
 
-EIPL provides:
+ SARNN temporal dynamics model
 
-Motion prediction and generation models
+ ROSBag → NPZ conversion pipeline
 
-Dataset utilities (list_to_numpy, padding variable-length sequences, etc.)
+ Dataset builder with task labels
 
-Training tools such as EarlyStopping, LossScheduler, and evaluation utilities
+## Component Overview
+Component	File	Description
+ROSBag → NPZ Converter	1_rosbag2npz.py	Extracts RGB, depth, GelSight1/2 tactile images, joint states, and generates action sequences.
+Dataset Builder	2_make_dataset.py	Creates padded train/test datasets with task labels and normalization metadata.
+CLIP-SARNN Model	SARNN_CLIP.py	Implements CLIP-guided keypoint extraction, Spatial Softmax, and SARNN temporal prediction.
+Training Pipeline	train_clip_sarnn.py	Full training loop with text embedding lookup, mixed precision, scheduling, and logging.
+Requirements
+Item	Version
+Ubuntu	20.04+
+Python	3.8+
+PyTorch	1.11+ (CUDA recommended)
+CLIP	openai-clip
+ROS (optional, for data collection)	Noetic / ROS2
+GelSight modules	Required if using tactile input
+EIPL	Optional but recommended
 
-A unified structure for predictive sensorimotor learning
+**1. ROSBag → NPZ Dataset Conversion**
 
-Our project extends EIPL with:
+Run the converter on a directory of ROS bag files:
 
-Multimodal tactile perception (GelSight1 & GelSight2)
+python3 1_rosbag2npz.py /path/to/bag_dir
 
-CLIP-guided visual keypoint extraction
-
-Text-conditioned manipulation behavior
-
-A SARNN architecture for long-horizon multimodal prediction
-
-**Features**
-Multimodal Inputs
-
-RGB camera images
-
-Depth images
-
-GelSight tactile images
-
-gelsight1 and gelsight2 are high-resolution tactile image sensors providing surface deformation, slip cues, and contact geometry
-
-Robot joint states
-
-Task instructions encoded by CLIP text embeddings
-
-Model Architecture
-
-CLIP (ViT-B/32) feature extraction
-
-Adapter CNN → Spatial Softmax → learned keypoints
-
-SARNN temporal dynamics (LSTMCell)
-
-Predicts:
-
-reconstructed next-frame image
-
-future joint states
-
-next keypoint distribution
-
-
-**1. Convert ROSBag → NPZ**
-
-Run:
-
-python3 1_rosbag2npz.py /path/to/rosbag_dir
-
-
-Extracted topics:
-
+Extracted modalities
 Topic	Description
-/camera/color/image_raw	RGB images
+/camera/color/image_raw	RGB frames
 /camera/depth/image_rect_raw	Depth images (uint16)
-/gelsight1/.../image/compressed	Left GelSight tactile RGB
-/gelsight2/.../image/compressed	Right GelSight tactile RGB
-/joint_states	Robot joint positions
+/gelsight1/.../image/compressed	Left GelSight tactile image
+/gelsight2/.../image/compressed	Right GelSight tactile image
+/joint_states	Robot joint angles
+Output structure inside each .npz:
+color         (T, H, W, 3)
+depth         (T, H, W)
+gelsight1     (T, H, W, 3)
+gelsight2     (T, H, W, 3)
+joints_state  (T, P)
+actions       (T, P)    # q(t+1)
 
-GelSight sensors provide tactile observation used as image input.
 
-The script also computes:
+GelSight cameras supply tactile deformation patterns used as image-based tactile observations.
 
-joints_state[t] = q_t
-
-actions[t] = q_{t+1} (for behavior cloning)
-
-**2. Build Dataset**
+**2. Dataset Construction**
 
 Run:
 
 python3 2_make_dataset.py
 
 
-Produces:
+Outputs:
 
 data/train/images.npy
 data/train/joints.npy
@@ -106,9 +77,7 @@ data/test/tasks.npy
 data/task_dict.json
 data/joint_bounds.npy
 
-
-Example task_dict.json:
-
+Example task dictionary:
 {
     "0": "grasp the black cable",
     "1": "pull the cable to the left",
@@ -116,40 +85,67 @@ Example task_dict.json:
 }
 
 
-These instructions are converted into CLIP embeddings during training.
+These strings are encoded into CLIP text embeddings and used for task conditioning.
 
-**3. Train the CLIP-SARNN Model**
+**3. CLIP-SARNN Model**
 
-Run training:
+This model integrates three major components:
+
+(1) CLIP Visual Encoder
+
+Uses ViT-B/32
+
+Extracts a 7×7 spatial feature map
+
+Text embedding modulates channel attention
+
+Adapter CNN reduces 512 → K heatmap channels
+
+(2) Spatial Softmax
+
+Converts each heatmap into 2D keypoints.
+
+(3) SARNN Temporal Dynamics
+
+LSTMCell-based recursive prediction
+
+Predicts:
+
+next-frame image reconstruction
+
+next joint state
+
+next keypoint distribution
+
+The architecture is designed for long-horizon multimodal prediction.
+
+**4. Training the Model**
+
+Run:
 
 python3 train_clip_sarnn.py --tag clip_run1
 
-
-Useful arguments:
-
-Argument	Description
---no_clip	Disable CLIP (use CNN encoder only)
+Key arguments
+Argument	Function
+--no_clip	Disable CLIP encoder
 --k_dim	Number of keypoints
---rec_dim	RNN hidden size
+--rec_dim	Size of RNN hidden state
 --stdev	Image noise augmentation
 --batch_size	Training batch size
-
-TensorBoard:
-
+--epoch	Number of epochs
+Training logs:
 tensorboard --logdir log/
 
 
 Outputs:
 
-CLIP_SARNN.pth (best model checkpoint)
+CLIP_SARNN.pth
+loss.png
+TensorBoard event files
 
-loss.png (loss curves)
+**5. NPZ Dataset Format**
 
-TensorBoard summaries
-
-**NPZ File Structure**
-
-Every .npz file contains:
+Each .npz file contains:
 
 {
     "color": (T, H, W, 3),
@@ -159,3 +155,32 @@ Every .npz file contains:
     "joints_state": (T, P),
     "actions": (T, P)
 }
+
+
+This structure aligns with predictive-learning conventions used in EIPL.
+
+**6. Relation to EIPL**
+
+This repository is heavily inspired by the concepts and architecture of:
+
+EIPL: Embodied Intelligence with Deep Predictive Learning
+https://github.com/ogata-lab/eipl
+
+
+https://ogata-lab.github.io/eipl-docs/en/
+
+EIPL provides the theoretical and software foundations for:
+
+future-state prediction
+
+attention-based representation learning
+
+recurrent predictive control
+
+Our contribution expands EIPL’s paradigm by integrating:
+
+CLIP language conditioning
+
+GelSight tactile observation
+
+multimodal fusion for manipulation tasks
